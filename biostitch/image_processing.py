@@ -134,7 +134,6 @@ def stitch_images(images: List[Image], ids: Union[list, DF],
                   x_size: Union[list, DF], y_size: Union[list, DF],
                   y_pos: Optional[list], scan_mode: str) -> List[Image]:
     """ Stitch cropped images by concatenating them horizontally and vertically """
-
     dtype = images[0].dtype.type
     if scan_mode == 'auto':
         big_img_width = max([sum(row) for row in x_size])

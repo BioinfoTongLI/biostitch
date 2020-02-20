@@ -186,8 +186,10 @@ def get_image_sizes_scan_auto(tag_Images, reference_channel, fovs):
     c = clusters[0]
     c_ids = []
     this_cluster_ids = []
+    this_cluster_xpos = []
     this_cluster_ypos = []
     c_ypos = []
+    c_xpos = []
 
     for i in range(0, len(clusters)):
         this_val = clusters[i]
@@ -197,15 +199,19 @@ def get_image_sizes_scan_auto(tag_Images, reference_channel, fovs):
             f_id = fovs[i]
         if this_val == c:
             this_cluster_ids.append(f_id)
+            this_cluster_xpos.append(x_pos[i])
             this_cluster_ypos.append(y_pos[i])
         else:
             c = this_val
             c_ids.append(this_cluster_ids)
+            c_xpos.append(this_cluster_xpos)
             c_ypos.append(this_cluster_ypos)
             this_cluster_ids = [f_id]
+            this_cluster_xpos = [x_pos[i]]
             this_cluster_ypos = [y_pos[i]]
         if i == len(clusters) - 1:
             c_ids.append(this_cluster_ids)
+            c_xpos.append(this_cluster_xpos)
             c_ypos.append(this_cluster_ypos)
 
     ids_in_clusters = [set(c) for c in c_ids]
@@ -240,23 +246,25 @@ def get_image_sizes_scan_auto(tag_Images, reference_channel, fovs):
         img_ids = [i[2] for i in row]
 
         # start each row with zero padding and full width image
-        img_size = [(img_coords[0], 'zeros'), (img_coords[1] - img_coords[0], img_ids[0])]
+        # img_size = [(img_coords[0], 'zeros'), (img_coords[1] - img_coords[0], img_ids[0])]
+        img_x_size = [(img_coords[0], 'zeros')]
         # detect gaps between images
-        for i in range(1, len(img_coords)):
-            size = img_coords[i] - img_coords[i - 1]
+        for i in range(0, len(img_coords)-1):
+            size = abs(img_coords[i] - img_coords[i + 1])
             # if difference between two adjacent pictures is bigger than width of default picture,
             # then consider this part as a gap, subtract img size from it, and consider the rest as size of a gap
             if size > default_img_width:
                 image_size = default_img_width
                 gap_size = size - default_img_width
-                img_size.extend([(gap_size, 'zeros'), (image_size, img_ids[i])])
+                img_x_size.extend([(gap_size, 'zeros'), (image_size, img_ids[i])])
             else:
-                img_size.append((size, img_ids[i]))
+                img_x_size.append((size, img_ids[i]))
 
-        row_width = sum([i[0] for i in img_size])
+        img_x_size.append((default_img_width, img_ids[-1]))
+        img_sizes.append(img_x_size)
+
+        row_width = sum([i[0] for i in img_x_size])
         row_sizes.append(row_width)
-
-        img_sizes.append(img_size)
 
     # add zero padding to the end of each row
     max_width = max(row_sizes)

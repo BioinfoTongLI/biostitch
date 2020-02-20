@@ -111,7 +111,6 @@ class AdaptiveShiftEstimation:
         ids = id_list
         res = [np.nan] * len(ids)
 
-
         additional_space = int(round(self._default_image_shape[axis] * 0.01))
 
         for i in range(0, len(ids)-1):
