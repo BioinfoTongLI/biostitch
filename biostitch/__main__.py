@@ -43,7 +43,7 @@ def main():
 
 
     stitcher = ImageStitcher()
-    stitcher.image_directory = args.img_dir
+    stitcher.image_directory = args.img_dir.strip()
     stitcher.xml_path = args.xml
     stitcher.output_directory = args.out_dir
     stitcher.image_name = args.output_name
