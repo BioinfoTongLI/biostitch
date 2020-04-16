@@ -55,11 +55,15 @@ class AdaptiveShiftEstimation:
         if mode == 'row':
             nrows = arr.shape[0]
             row_medians = list(np.nanmedian(arr, axis=1))
+            overall_row_median = np.nanmedian(row_medians)
+            row_medians = np.nan_to_num(row_medians, overall_row_median)
             for i in range(0, nrows):
                 arr[i, :] = int(round(row_medians[i]))
         elif mode == 'col':
             ncols = arr.shape[1]
             col_medians = list(np.nanmedian(arr, axis=0))
+            overall_col_median = np.nanmedian(col_medians)
+            col_medians = np.nan_to_num(col_medians, overall_col_median)
             for i in range(0, ncols):
                 arr[:, i] = int(round(col_medians[i]))
 
@@ -77,6 +81,8 @@ class AdaptiveShiftEstimation:
             img2_overlap = overlap
             part1 = cv.normalize(img1[:, img1_overlap:], None, 0, 1, cv.NORM_MINMAX, cv.CV_32F)
             part2 = cv.normalize(img2[:, :img2_overlap], None, 0, 1, cv.NORM_MINMAX, cv.CV_32F)
+            if part1 is None or part2 is None:
+                return 0
             shift, error = cv.phaseCorrelate(part1, part2)
             hor_shift = shift[0]
 
@@ -92,7 +98,8 @@ class AdaptiveShiftEstimation:
             img2_overlap = overlap
             part1 = cv.normalize(img1[img1_overlap:, :], None, 0, 1, cv.NORM_MINMAX, cv.CV_32F)
             part2 = cv.normalize(img2[:img2_overlap, :], None, 0, 1, cv.NORM_MINMAX, cv.CV_32F)
-
+            if part1 is None or part2 is None:
+                return 0
             shift, error = cv.phaseCorrelate(part1, part2)
             ver_shift = shift[1]
 
@@ -175,7 +182,7 @@ class AdaptiveShiftEstimation:
         ids = []
         x_sizes = []
         y_sizes = []
-    
+
         for cls in rows_in_clusters:
             if cls == []:
                 continue
