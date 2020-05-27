@@ -1,6 +1,6 @@
 import os
 import re
-from typing import List, Union, Optional
+from typing import List, Tuple, Union, Optional
 
 import cv2 as cv
 import dask
@@ -18,7 +18,7 @@ def alphaNumOrder(string: str) -> str:
                     else x for x in re.split(r'(\d+)', string)])
 
 
-def read_images(path: str, is_dir: bool) -> List[Image]:
+def read_images(path: str, is_dir: bool) -> Tuple[Image]:
     """ Rread images in natural order (with respect to numbers) """
 
     allowed_extensions = ('tif', 'tiff')
@@ -40,7 +40,7 @@ def read_images(path: str, is_dir: bool) -> List[Image]:
     return img_list
 
 
-def equalize_histogram(img_list: List[Image]) -> List[Image]:
+def equalize_histogram(img_list: Tuple[Image]) -> Tuple[Image]:
     """ Function for adaptive normalization of image histogram CLAHE """
     nrows, ncols = img_list[0].shape
     grid_size = [int(round(max((ncols, nrows)) / 20))] * 2
@@ -61,7 +61,7 @@ def z_project(path: str) -> Image:
     return np.max(np.stack(read_images(path, is_dir=False), axis=0), axis=0)
 
 
-def create_z_projection_for_fov(channel_name: str, path_list: list) -> List[Image]:
+def create_z_projection_for_fov(channel_name: str, path_list: list) -> Tuple[Image]:
     """ Read images, convert them into stack, get max z-projection"""
     channel = path_list[channel_name]
     task = [dask.delayed(z_project)(field) for field in channel]
@@ -83,8 +83,8 @@ def stitch_z_projection(channel_name: str, fields_path_list: list,
     return stitch_images(z_max_fov_list, ids, x_size, y_size, y_pos, scan_mode)
 
 
-def crop_images_scan_manual(images: List[Image], ids: Union[list, DF],
-                            x_sizes: Union[list, DF], y_sizes: Union[list, DF]) -> List[Image]:
+def crop_images_scan_manual(images: Tuple[Image], ids: Union[list, DF],
+                            x_sizes: Union[list, DF], y_sizes: Union[list, DF]) -> Tuple[Image]:
     """ Read data from dataframe ids, series x_sizes and y_sizes and crop images """
     x_sizes = x_sizes.to_list()
     y_sizes = y_sizes.to_list()
@@ -104,8 +104,8 @@ def crop_images_scan_manual(images: List[Image], ids: Union[list, DF],
     return r_images
 
 
-def crop_images_scan_auto(images: List[Image], ids: Union[list, DF],
-                          x_sizes: Union[list, DF], y_sizes: Union[list, DF]) -> List[Image]:
+def crop_images_scan_auto(images: Tuple[Image], ids: Union[list, DF],
+                          x_sizes: Union[list, DF], y_sizes: Union[list, DF]) -> Tuple[Image]:
     #default_img_shape = images[0].shape
     dtype = images[0].dtype.type
     r_images = []
@@ -127,7 +127,7 @@ def crop_images_scan_auto(images: List[Image], ids: Union[list, DF],
     return r_images
 
 
-def stitch_images(images: List[Image], ids: Union[list, DF],
+def stitch_images(images: Tuple[Image], ids: Union[list, DF],
                   x_size: Union[list, DF], y_size: Union[list, DF],
                   y_pos: Optional[list], scan_mode: str) -> Image:
     """ Stitch cropped images by concatenating them horizontally and vertically """
@@ -143,7 +143,7 @@ def stitch_images(images: List[Image], ids: Union[list, DF],
         # padding values are used to calculate horizontal position
         # cumulative sum is used to calculate vertical position
         left_pad = [row[0] for row in x_size]
-        right_pad = [sum(row[:-1]) for row in x_size]
+        #right_pad = [sum(row[:-1]) for row in x_size]
 
         # y_pos_in_big_img = list(np.cumsum([row[0] for row in y_size]))
         # y_pos_in_big_img.insert(0, 0)
@@ -153,7 +153,8 @@ def stitch_images(images: List[Image], ids: Union[list, DF],
             f = y_pos[row]  # from
             img_row = np.concatenate(crop_images_scan_auto(images, ids[row], x_size[row], y_size[row]), axis=1)
             t = f + img_row.shape[0]  # to
-            res[f:t, left_pad[row]:right_pad[row]] = img_row
+            right_pad = left_pad[row] + img_row.shape[1]
+            res[f:t, left_pad[row]:right_pad] = img_row
 
     elif scan_mode == 'manual':
         big_img_width = sum(x_size.iloc[0, :])
@@ -181,10 +182,16 @@ def stitch_plane(plane_paths: List[str], ids: Union[list, DF],
     """ Do histogram normalization and stitch multiple images into one plane """
     images = read_images(plane_paths, is_dir=False)
     dtype = images[0].dtype.type
-    ncols = sum(x_size.iloc[0, :])
-    nrows = sum(y_size.iloc[:, 0])
+    if scan_mode == 'manual':
+        ncols = sum(x_size.iloc[0, :])
+        nrows = sum(y_size.iloc[:, 0])
+    elif scan_mode == 'auto':
+        ncols = sum(x_size[0])
+        nrows = sum(row[0] for row in y_size)
     result_plane = np.zeros((1, nrows, ncols), dtype=dtype)
     if do_illum_cor:
         images = equalize_histogram(images)
+
+
     result_plane[0, :, :] = stitch_images(images, ids, x_size, y_size, y_pos, scan_mode)
     return result_plane

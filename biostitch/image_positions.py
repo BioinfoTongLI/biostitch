@@ -1,3 +1,4 @@
+import os.path as osp
 import re
 import xml.etree.ElementTree as ET
 from itertools import chain
@@ -63,20 +64,7 @@ def get_positions_from_xml(tag_Images: XML, reference_channel: str, fovs: Union[
     return x_pos, y_pos, img_pos
 
 
-def get_image_positions_scan_manual(tag_Images: XML, reference_channel: str, fovs: Union[None, List[int]]) -> Tuple[list, list, list]:
-    """ Specify path to read xml file.
-        Computes position of each picture and zero padding.
-    """
-    # get microscope coordinates of images from xml file
-    x_pos, y_pos, img_pos = get_positions_from_xml(tag_Images, reference_channel, fovs)
-
-    if fovs is not None:
-        fovs = [i - 1 for i in fovs]
-        min_fovs = min(fovs)
-        fovs = [i - min_fovs for i in fovs]
-        img_pos = [(pos[0], pos[1], pos[2] - min_fovs) for pos in img_pos]
-
-    # centering coordinates to 0,0
+def zero_center_coordinates(x_pos: list, y_pos: list, img_pos: list):
     leftmost = min(x_pos)
     top = max(y_pos)
 
@@ -101,6 +89,75 @@ def get_image_positions_scan_manual(tag_Images: XML, reference_channel: str, fov
             img_pos = [(pos[0] - leftmost, top - pos[1], pos[2]) for pos in img_pos]
             x_pos = [i - leftmost for i in x_pos]
             y_pos = [top - i for i in y_pos]
+
+
+    return x_pos, y_pos, img_pos
+
+
+def img_pos_to_size(img_pos_per_row: list, default_img_width: int, default_img_height: int):
+    """ Create image sizes based on difference in coordinates """
+    y_sizes = [row[0][1] for row in img_pos_per_row]
+    y_sizes = np.diff(y_sizes).tolist()
+    y_sizes.append(default_img_height)
+
+    x_sizes_per_row = []
+    width_per_row = []
+    for row in img_pos_per_row:
+        x_coords = [i[0] for i in row]
+        img_ids = [i[2] for i in row]
+
+        if len(row) == 1:
+            row_x_sizes = [(x_coords[0], 'zeros'), (default_img_width, img_ids[0])]
+        else:
+            # start each row with zero padding and full width image
+            row_x_sizes = [(x_coords[0], 'zeros'), (x_coords[1] - x_coords[0], img_ids[0])]
+            # detect gaps between images
+            for i in range(1, len(x_coords)):
+                size = x_coords[i] - x_coords[i - 1]
+                # if difference between two adjacent pictures is bigger than width of default picture,
+                # then consider this part as a gap, subtract img size from it, and consider the rest as size of a gap
+                if size > default_img_width:
+                    image_size = default_img_width
+                    gap_size = size - default_img_width
+                    row_x_sizes.extend([(gap_size, 'zeros'), (image_size, img_ids[i])])
+                else:
+                    row_x_sizes.append((size, img_ids[i]))
+
+        row_width = sum([i[0] for i in row_x_sizes])
+        width_per_row.append(row_width)
+
+        x_sizes_per_row.append(row_x_sizes)
+
+    # add zero padding to the end of each row
+    max_width = max(width_per_row)
+    for i in range(0, len(width_per_row)):
+        diff = max_width - width_per_row[i]
+        x_sizes_per_row[i].append((diff, 'zeros'))
+
+    # adding y_coordinate to tuple
+    for row in range(0, len(x_sizes_per_row)):
+        x_sizes_per_row[row] = [(i[0], y_sizes[row], i[1]) for i in x_sizes_per_row[row]]
+    img_sizes_per_row = x_sizes_per_row
+
+    return img_sizes_per_row
+
+
+
+def get_image_positions_scan_manual(tag_Images: XML, reference_channel: str, fovs: Union[None, List[int]]) -> Tuple[list, list, list]:
+    """ Specify path to read xml file.
+        Computes position of each picture and zero padding.
+    """
+    # get microscope coordinates of images from xml file
+    x_pos, y_pos, img_pos = get_positions_from_xml(tag_Images, reference_channel, fovs)
+
+    if fovs is not None:
+        fovs = [i - 1 for i in fovs]
+        min_fovs = min(fovs)
+        fovs = [i - min_fovs for i in fovs]
+        img_pos = [(pos[0], pos[1], pos[2] - min_fovs) for pos in img_pos]
+
+    # centering coordinates to 0,0
+    x_pos, y_pos, img_pos = zero_center_coordinates(x_pos, y_pos, img_pos)
 
     y_range = sorted(set(y_pos))  # because set is unordered
     x_range = sorted(set(x_pos))
@@ -126,28 +183,36 @@ def get_image_positions_scan_manual(tag_Images: XML, reference_channel: str, fov
         y_pos.append([i[1] for i in row])
         ids.append([i[2] for i in row])
 
-    return ids, x_pos, y_pos
+    return ids, x_pos, y_pos, row_list
 
 
 def get_image_sizes_scan_manual(tag_Images: XML, reference_channel: str, fovs: Union[None, List[int]]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    ids, x_pos, y_pos = get_image_positions_scan_manual(tag_Images, reference_channel, fovs)
+    ids, x_pos, y_pos, row_list = get_image_positions_scan_manual(tag_Images, reference_channel, fovs)
 
-    ids = np.array(ids)
-    x_pos = np.array(x_pos)
-    y_pos = np.array(y_pos)
+    #ids = np.array(ids)
+    #x_pos = np.array(x_pos)
+    #y_pos = np.array(y_pos)
 
     # assuming that all images are of the same size, so default image size from first image in xml are taken
     default_img_width = int(tag_Images[0].find('ImageSizeX').text)
     default_img_height = int(tag_Images[0].find('ImageSizeY').text)
 
-    # set size of first column and first row to the size of single picture
-    x_size = np.diff(x_pos, axis=1)
-    y_size = np.diff(y_pos, axis=0)
 
-    last_x_col = np.array([[default_img_width]] * ids.shape[0])
-    last_y_row = np.array([[default_img_height] * ids.shape[1]])
-    x_size = np.concatenate((x_size, last_x_col), axis=1)
-    y_size = np.concatenate((y_size, last_y_row), axis=0)
+    # create image sizes based on difference in coordinates
+
+    img_sizes_per_row = img_pos_to_size(row_list, default_img_width, default_img_height)
+
+    ids = []
+    x_size = []
+    y_size = []
+    for row in img_sizes_per_row:
+        x_size.append([i[0] for i in row])
+        y_size.append([i[1] for i in row])
+        ids.append([i[2] for i in row])
+
+    ids = np.array(ids)
+    x_size = np.array(x_size)
+    y_size = np.array(y_size)
 
     return ids, x_size, y_size
 
@@ -171,30 +236,7 @@ def get_image_sizes_scan_auto(tag_Images: XML, reference_channel: str, fovs: Uni
     default_img_height = int(tag_Images[0].find('ImageSizeY').text)
 
     # centering coordinates to 0,0
-    leftmost = min(x_pos)
-    top = max(y_pos)
-
-    if leftmost < 0:
-        leftmost = abs(leftmost)
-        if top < 0:
-            top = abs(top)
-            img_pos = [(pos[0] + leftmost, abs(pos[1]) - top, pos[2]) for pos in img_pos]
-            x_pos = [i + leftmost for i in x_pos]
-            y_pos = [abs(i) - top for i in y_pos]
-        else:
-            img_pos = [(pos[0] + leftmost, top - pos[1], pos[2]) for pos in img_pos]
-            x_pos = [i + leftmost for i in x_pos]
-            y_pos = [top - i for i in y_pos]
-    else:
-        if top < 0:
-            top = abs(top)
-            img_pos = [(pos[0] - leftmost, abs(pos[1]) - top, pos[2]) for pos in img_pos]
-            x_pos = [i - leftmost for i in x_pos]
-            y_pos = [abs(i) - top for i in y_pos]
-        else:
-            img_pos = [(pos[0] - leftmost, top - pos[1], pos[2]) for pos in img_pos]
-            x_pos = [i - leftmost for i in x_pos]
-            y_pos = [top - i for i in y_pos]
+    x_pos, y_pos, img_pos = zero_center_coordinates(x_pos, y_pos, img_pos)
 
     from scipy.cluster.hierarchy import fclusterdata
     z = np.array(list(zip(x_pos, y_pos)))
@@ -287,51 +329,12 @@ def get_image_sizes_scan_auto(tag_Images: XML, reference_channel: str, fovs: Uni
             row_list = new_row_list
 
     # create image sizes based on difference in coordinates
-    x_sizes_per_row = []
-    width_per_row = []
-    for row in row_list:
-        x_coords = [i[0] for i in row]
-        img_ids = [i[2] for i in row]
-
-        if len(row) == 1:
-            row_x_sizes = [(x_coords[0], 'zeros'), (default_img_width, img_ids[0])]
-        else:
-            # start each row with zero padding and full width image
-            row_x_sizes = [(x_coords[0], 'zeros'), (x_coords[1] - x_coords[0], img_ids[0])]
-            # detect gaps between images
-            for i in range(1, len(x_coords)):
-                size = x_coords[i] - x_coords[i - 1]
-                # if difference between two adjacent pictures is bigger than width of default picture,
-                # then consider this part as a gap, subtract img size from it, and consider the rest as size of a gap
-                if size > default_img_width:
-                    image_size = default_img_width
-                    gap_size = size - default_img_width
-                    row_x_sizes.extend([(gap_size, 'zeros'), (image_size, img_ids[i])])
-                else:
-                    row_x_sizes.append((size, img_ids[i]))
-
-        row_width = sum([i[0] for i in row_x_sizes])
-        width_per_row.append(row_width)
-
-        x_sizes_per_row.append(row_x_sizes)
-
-    # add zero padding to the end of each row
-    max_width = max(width_per_row)
-    for i in range(0, len(width_per_row)):
-        diff = max_width - width_per_row[i]
-        x_sizes_per_row[i].append((diff, 'zeros'))
-
-    # adding y_coordinate to tuple
-    for row in range(0, len(x_sizes_per_row)):
-        x_sizes_per_row[row] = [(i[0], y_sizes[row], i[1]) for i in x_sizes_per_row[row]]
-
-    # total_height = sum(y_sizes)
-    # total_width = max_width
+    img_sizes_per_row = img_pos_to_size(row_list, default_img_width, default_img_height)
 
     ids = []
     x_size = []
     y_size = []
-    for row in x_sizes_per_row:
+    for row in img_sizes_per_row:
         x_size.append([i[0] for i in row])
         y_size.append([i[1] for i in row])
         ids.append([i[2] for i in row])
@@ -344,7 +347,8 @@ def get_image_sizes_scan_auto(tag_Images: XML, reference_channel: str, fovs: Uni
 # ----------- Get full path of each image im xml ----------
 
 
-def get_target_per_channel_arrangement(tag_Images: XML, target: str, fovs: Union[None, List[int]]) -> dict:
+def get_path_for_each_plane_and_field_per_channel(tag_Images: XML, img_dir: str,
+                                                  fovs: Union[None, List[int]]) -> Tuple[dict, dict]:
     """ target is either 'plane' or 'field' """
 
     metadata_list = []
@@ -365,13 +369,12 @@ def get_target_per_channel_arrangement(tag_Images: XML, target: str, fovs: Union
                                 )
 
     metadata_table = pd.DataFrame(metadata_list, columns=['field_id', 'plane_id', 'channel_name', 'file_name'])
-
+    # convert to full path names
+    nrows = len(metadata_table['file_name'])
+    metadata_table['file_name'] = list(map(osp.join, [img_dir] * nrows, metadata_table['file_name']))
     # get information about channels names and number of planes
-    if target == 'plane':
-        target_val = list(metadata_table.loc[:, 'plane_id'].unique())
-    elif target == 'field':
-        target_val = list(metadata_table.loc[:, 'field_id'].unique())
-
+    planes = list(metadata_table.loc[:, 'plane_id'].unique())
+    fields = list(metadata_table.loc[:, 'field_id'].unique())
     channel_names = list(metadata_table.loc[:, 'channel_name'].unique())
 
     # organize images into list of channels
@@ -380,34 +383,20 @@ def get_target_per_channel_arrangement(tag_Images: XML, target: str, fovs: Union
         channel_list.append(metadata_table.loc[metadata_table.loc[:, 'channel_name'] == i, :])
 
     # organize images into dictionary of a kind {channel_name: [list of images divided into planes]}
-    # e.g. {'DAPI': [25 dataframes]}
-    targets_per_channel = {}
+    # e.g. {'DAPI': [[plane1],[plane2]]}
+
+    plane_per_channel = {}
     for c, channel in enumerate(channel_list):
-        target_val_list = []
-        for i in target_val:
-            target_val_list.append(channel.loc[channel.loc[:, target + '_id'] == i, :])
-        targets_per_channel.update({channel_names[c]: target_val_list})
+        plane_list = []
+        for i in planes:
+            plane_list.append(channel.loc[channel.loc[:, 'plane_id'] == i, 'file_name'].to_list())
+        plane_per_channel.update({channel_names[c]: plane_list})
 
-    return targets_per_channel
+    field_per_channel = {}
+    for c, channel in enumerate(channel_list):
+        field_list = []
+        for i in fields:
+            field_list.append(channel.loc[channel.loc[:, 'field_id'] == i, 'file_name'].to_list())
+        field_per_channel.update({channel_names[c]: field_list})
 
-
-def get_image_paths_for_planes_per_channel(img_dir: str, tag_Images: XML, fovs: Union[None, List[int]]) -> dict:
-    channel_plane_arr = get_target_per_channel_arrangement(tag_Images, target='plane', fovs=fovs)
-    channel_paths = {}
-    for channel in channel_plane_arr:
-        plane_paths = []
-        for plane in channel_plane_arr[channel]:
-            plane_paths.append([img_dir + fn for fn in plane['file_name'].to_list()])
-        channel_paths[channel] = plane_paths
-    return channel_paths
-
-
-def get_image_paths_for_fields_per_channel(img_dir: str, tag_Images: XML, fovs: Union[None, List[int]]) -> dict:
-    channel_field_arr = get_target_per_channel_arrangement(tag_Images, target='field', fovs=fovs)
-    channel_paths = {}
-    for channel in channel_field_arr:
-        field_paths = []
-        for field in channel_field_arr[channel]:
-            field_paths.append([img_dir + fn for fn in field['file_name'].to_list()])
-        channel_paths[channel] = field_paths
-    return channel_paths
+    return plane_per_channel, field_per_channel
